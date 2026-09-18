@@ -19,7 +19,9 @@ use utils::coin;
 
 use crate::{
     arb::{Arb, ArbResult},
+    cex::SharedCexQuote,
     common::notification::new_tg_messages,
+    paper::PaperLogger,
     types::{Action, Source},
 };
 
@@ -39,6 +41,9 @@ pub struct Worker {
     pub submitter: Arc<dyn ActionSubmitter<Action>>,
     pub sui: SuiClient,
     pub arb: Arc<Arb>,
+    pub paper_only: bool,
+    pub paper_logger: Arc<PaperLogger>,
+    pub cex_quote: SharedCexQuote,
 }
 
 impl Worker {
@@ -77,6 +82,26 @@ impl Worker {
         )
         .await
         {
+            let quote = self.cex_quote.read().unwrap().clone();
+            self.paper_logger.record(
+                &tx_digest.to_string(),
+                &coin,
+                pool_id.map(|id| id.to_string()),
+                &arb_result,
+                elapsed.as_millis(),
+                quote,
+            )?;
+
+            if self.paper_only {
+                info!(
+                    profit_mist = arb_result.best_trial_result.profit,
+                    amount_in_mist = arb_result.best_trial_result.amount_in,
+                    elapsed = ?elapsed,
+                    "📝 paper-only opportunity recorded"
+                );
+                return Ok(());
+            }
+
             let tx_data = match self.dry_run_tx_data(arb_result.tx_data.clone(), sim_ctx.clone()).await {
                 Ok(tx_data) => tx_data,
                 Err(error) => {

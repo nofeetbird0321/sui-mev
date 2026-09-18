@@ -1,9 +1,11 @@
 mod arb;
 mod collector;
+mod cex;
 mod common;
 mod config;
 mod defi;
 mod executor;
+mod paper;
 mod pool_ids;
 mod start_bot;
 mod strategy;

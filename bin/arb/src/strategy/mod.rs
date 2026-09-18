@@ -37,7 +37,9 @@ use worker::Worker;
 
 use crate::{
     arb::Arb,
+    cex::SharedCexQuote,
     common::get_latest_epoch,
+    paper::PaperLogger,
     types::{Action, Event, Source},
 };
 
@@ -56,6 +58,9 @@ pub struct ArbStrategy {
     sui: SuiClient,
     epoch: Option<SimEpoch>,
     dedicated_simulator: Option<Arc<ReplaySimulator>>,
+    paper_only: bool,
+    paper_logger: Arc<PaperLogger>,
+    cex_quote: SharedCexQuote,
 }
 
 impl ArbStrategy {
@@ -67,6 +72,9 @@ impl ArbStrategy {
         rpc_url: &str,
         workers: usize,
         dedicated_simulator: Option<Arc<ReplaySimulator>>,
+        paper_only: bool,
+        paper_logger: Arc<PaperLogger>,
+        cex_quote: SharedCexQuote,
     ) -> Self {
         let sui = SuiClientBuilder::default().build(&rpc_url).await.unwrap();
         let epoch = get_latest_epoch(&sui).await.unwrap();
@@ -84,6 +92,9 @@ impl ArbStrategy {
             sui,
             epoch: Some(epoch),
             dedicated_simulator,
+            paper_only,
+            paper_logger,
+            cex_quote,
         }
     }
 
@@ -325,6 +336,9 @@ impl burberry::Strategy<Event, Action> for ArbStrategy {
             let simulator_pool_worker = self.simulator_pool.clone();
             let simulator_name = simulator_pool_arb.get().name().to_string();
             let dedicated_simulator = self.dedicated_simulator.clone();
+            let paper_only = self.paper_only;
+            let paper_logger = self.paper_logger.clone();
+            let cex_quote = self.cex_quote.clone();
 
             let _ = std::thread::Builder::new()
                 .stack_size(128 * 1024 * 1024) // 128 MB
@@ -345,6 +359,9 @@ impl burberry::Strategy<Event, Action> for ArbStrategy {
                         sui,
                         arb,
                         dedicated_simulator,
+                        paper_only,
+                        paper_logger,
+                        cex_quote,
                     };
                     worker.run().unwrap_or_else(|e| panic!("worker {id} panicked: {e:?}"));
                 });
