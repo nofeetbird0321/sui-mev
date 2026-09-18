@@ -14,8 +14,10 @@ use sui_types::{base_types::SuiAddress, crypto::SuiKeyPair};
 use tracing::{info, warn};
 
 use crate::{
+    cex::{new_shared_quote, run_binance_book_ticker},
     collector::{PrivateTxCollector, PublicTxCollector},
     executor::PublicTxExecutor,
+    paper::PaperLogger,
     strategy::ArbStrategy,
     types::{Action, Event},
     HttpConfig,
@@ -40,6 +42,18 @@ pub struct Args {
 
     #[command(flatten)]
     worker_config: WorkerConfig,
+
+    /// Observe profitable opportunities but never submit transactions.
+    #[arg(long, env = "PAPER_ONLY", default_value_t = true, action = clap::ArgAction::Set)]
+    pub paper_only: bool,
+
+    /// Binance Spot symbol used as an external reference price.
+    #[arg(long, env = "CEX_SYMBOL", default_value = "suiusdt")]
+    pub cex_symbol: String,
+
+    /// JSONL output for paper opportunities.
+    #[arg(long, env = "PAPER_LOG", default_value = "data/paper-arb.jsonl")]
+    pub paper_log: String,
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -140,6 +154,17 @@ pub async fn run(args: Args) -> Result<()> {
     let preload_path = args.db_sim_config.preload_path;
     let mut engine = Engine::default();
 
+    let cex_quote = new_shared_quote();
+    let cex_quote_task = cex_quote.clone();
+    let cex_symbol = args.cex_symbol.clone();
+    tokio::spawn(async move {
+        if let Err(error) = run_binance_book_ticker(cex_quote_task, &cex_symbol).await {
+            tracing::error!(?error, "CEX reference price task stopped");
+        }
+    });
+    let paper_logger = Arc::new(PaperLogger::new(&args.paper_log)?);
+    info!(paper_only = args.paper_only, paper_log = %args.paper_log, cex_symbol = %args.cex_symbol, "paper/CEX configuration");
+
     if let Some(ref ws_url) = args.collector_config.shio_ws_url {
         let (shio_collector, shio_executor) =
             new_shio_collector_and_executor(keypair, Some(ws_url.clone()), None).await;
@@ -235,6 +260,9 @@ pub async fn run(args: Args) -> Result<()> {
         &rpc_url,
         args.worker_config.workers,
         dedicated_simulator,
+        args.paper_only,
+        paper_logger,
+        cex_quote,
     )
     .await;
     engine.add_strategy(Box::new(arb_strategy));
